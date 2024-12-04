@@ -1,10 +1,3 @@
-## 当前仓库配置地址([fish2018/tvbox](https://github.com/fish2018/tvbox))
-```bash
-https://mirror.ghproxy.com/https://raw.githubusercontent.com/fish2018/tvbox/master/all.json
-https://raw.yzuu.cf/fish2018/tvbox/master/all.json
-https://fastly.jsdelivr.net/gh/fish2018/tvbox/all.json
-```
-
 ## [tvbox_tools](https://hub.docker.com/r/2011820123/tvbox)
 写这个工具的主要原因是网上各种接口重复率和失效率极高。几个多仓接口能有成千上万个线路，实际上不重复、可用的线路只有那么几十个，实在是过于冗余了。所以做了这个整理工具，把接口中所有线路进行去重和格式化，json下载保存为同名txt文件，jar文件保存到jar目录下，最后输出个all.json(包含所有历史下载线路接口)和{target}.json(本次下载线路接口，默认tvbox.json)文件用于配置app，看起来比较简洁，方便修改维护。
 
