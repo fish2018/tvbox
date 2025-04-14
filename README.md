@@ -10,7 +10,9 @@
 - 为文件链接自动使用加速（支持多种加速）
 - 默认使用 https://githubfast.com 加速clone、push(push文件过大会限制)
 
-- 新增`cnb_tvbox_tools.py`，专用于将在线接口私有化到`https://cnb.cool/`，并支持将site中的文件(外挂jar、ext中的json)一同私有化。效果参考：https://cnb.cool/fish2018/duanju/-/git/raw/main/tvbox.json
+- 新增`cnb_tvbox_tools.py`，专用于将在线接口私有化到`https://cnb.cool/`，并支持将site中的文件(外挂jar、api中的py或drpy2.min.js、ext中的json)一同私有化。效果参考：
+  - https://cnb.cool/fish2018/duanju/-/git/raw/main/tvbox.json
+  - https://cnb.cool/fish2018/test/-/git/raw/main/tvbox.json
 
 ## 使用方法：
 
