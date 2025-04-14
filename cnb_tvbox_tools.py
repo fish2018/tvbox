@@ -29,9 +29,9 @@ global pipes
 pipes = set()
 
 class GetSrc:
-    def __init__(self, username=None, token=None, url=None, repo=None, num=10, target=None, timeout=3, signame=None, mirror=None, jar_suffix=None, ext=True):
+    def __init__(self, username=None, token=None, url=None, repo=None, num=10, target=None, timeout=3, signame=None, mirror=None, jar_suffix=None, site_down=True):
         self.jar_suffix = jar_suffix if jar_suffix else 'jar'
-        self.ext = ext # 是否下载ext里的文件到本地
+        self.site_down = site_down # 是否下载site里的文件到本地
         self.mirror = int(str(mirror).strip()) if mirror else 1
         self.mirror_proxy = 'https://ghp.ci/https://raw.githubusercontent.com'
         self.num = int(num)
@@ -221,81 +221,91 @@ class GetSrc:
         r.html.render(timeout=timeout)
         # print('解密结果:',r.html.text)
         return r.html
-    async def ext_down(self, files, url):
-        ext_dir = f"{self.repo}/ext"
-        if not os.path.exists(ext_dir):
-            os.makedirs(ext_dir)
+    async def site_file_down(self, files, url):
+        """
+        异步函数，用于同时下载和更新 ext 和 jar 文件。
 
+        参数:
+            files: 包含一个或两个文件路径的列表，例如 ['api.json', 'output.json']
+            url: 基础 URL，用于构造完整的下载 URL
+        """
+        # 1. 设置 ext 和 jar 的保存目录
+        ext_dir = f"{self.repo}/ext"
+        jar_dir = f"{self.repo}/jar"
+        for directory in [ext_dir, jar_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
+        # 2. 获取文件路径并读取 api.json
         file = files[0]
         file2 = files[1] if len(files) > 1 else ''
 
-        # 读取并解析 api.json 文件
-        api_data = ''
         with open(file, 'r', encoding='utf-8') as f:
             try:
                 api_data = commentjson.load(f)
                 sites = api_data["sites"]
-                print(f"总站点数: {len(sites)}")  # 调试：输出站点总数
+                print(f"总站点数: {len(sites)}")
             except Exception as e:
                 print(f"解析 {file} 失败: {e}")
                 return
 
-        # 使用 aiohttp 创建会话并收集下载任务
+        # 3. 使用 aiohttp 创建会话并收集下载任务
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             tasks = []
             for site in sites:
-                if "ext" in site:
-                    ext = site["ext"]
-                    if isinstance(ext, str):
-                        ext = ext.rstrip('?')
-                        if ext.endswith((".js", ".txt", ".json")):
+                # 处理 ext 和 jar 字段
+                for field, repo_dir_name in [("ext", "ext"), ("jar", "jar")]:
+                    if field in site:
+                        value = site[field]
+                        if isinstance(value, str):
+                            # 处理分号和末尾的 '?'（兼容 ext）
+                            value = value.split(';')[0].rstrip('?')
                             # 提取文件名
-                            filename = os.path.basename(ext)
-                            # 构造完整的 URL
-                            if './' in ext:
+                            filename = os.path.basename(value)
+                            # 构造下载 URL
+                            if './' in value:
                                 path = os.path.dirname(url)
-                                json_url = ext.replace('./', f'{path}/')
+                                json_url = value.replace('./', f'{path}/')
                             else:
-                                json_url = urljoin(url, ext)
+                                json_url = urljoin(url, value)
                             # 构造本地保存路径
-                            local_path = os.path.join(ext_dir, filename)
+                            local_path = os.path.join(f"{self.repo}/{repo_dir_name}", filename)
 
-                            # 调试：输出每个 ext 和对应的 URL
-                            # print(f"处理站点: {site.get('name', '未知')}, ext: {ext}, URL: {json_url}")
+                            # 定义异步下载任务
                             async def download_task(site=site, json_url=json_url, local_path=local_path,
-                                                    filename=filename):
+                                                    filename=filename, field=field, repo_dir_name=repo_dir_name):
                                 try:
                                     async with session.get(json_url) as response:
                                         response.raise_for_status()
                                         if os.path.exists(local_path):
-                                            # print(f'{local_path} 已存在')
-                                            site["ext"] = f'{self.cnb_slot}/ext/{filename}'
+                                            # 文件已存在，直接更新字段
+                                            site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
                                             return
+                                        # 下载并保存文件
                                         content = await response.read()
                                         with open(local_path, "wb") as f:
                                             f.write(content)
-                                        site["ext"] = f'{self.cnb_slot}/ext/{filename}'
-                                        # print(f'已保存 {local_path}')
+                                        site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
                                 except Exception as e:
-                                    print(f"下载 {json_url} 失败: {e}")
+                                    pass
+                                    # print(f"下载 {json_url} 失败: {e}")
 
                             tasks.append(download_task())
 
-            # 并发执行所有下载任务
+            # 4. 并发执行所有下载任务
             if tasks:
-                print(f"总下载任务数: {len(tasks)}")  # 调试：输出任务总数
+                print(f"总下载任务数: {len(tasks)}")
                 await asyncio.gather(*tasks)
             else:
-                print("没有找到符合条件的 ext 文件需要下载")
+                print("没有找到符合条件的 ext 或 jar 文件需要下载")
 
-        # 将更新后的 api_data 写回文件
-        with open(file, 'w', encoding='utf-8') as f2:
-            json.dump(api_data, f2, indent=4, ensure_ascii=False)
+        # 5. 将更新后的数据写回文件
+        with open(file, 'w', encoding='utf-8') as f:
+            json.dump(api_data, f, indent=4, ensure_ascii=False)
 
-        if file2 and os.path.basename(file2):  # 检查 file2 是否非空且有文件名
-            with open(file2, 'w', encoding='utf-8') as f3:
-                json.dump(api_data, f3, indent=4, ensure_ascii=False)
-
+        if file2 and os.path.basename(file2):
+            with open(file2, 'w', encoding='utf-8') as f:
+                json.dump(api_data, f, indent=4, ensure_ascii=False)
     def get_jar(self, name, url, text):
         if not os.path.exists(f'{self.repo}/jar'):
             os.makedirs(f'{self.repo}/jar')
@@ -366,8 +376,8 @@ class GetSrc:
                     f.write(r)
                     pipes.add(name)
                 try:
-                    if self.ext:
-                        await self.ext_down([f'{self.repo}{self.sep}{filename}'], url)
+                    if self.site_down:
+                        await self.site_file_down([f'{self.repo}{self.sep}{filename}'], url)
                 except Exception as e:
                     print(f'下载ext中的json失败: {e}')
         except Exception as e:
@@ -528,10 +538,10 @@ class GetSrc:
             except Exception as e:
                 print(333333333, e)
             try:
-                if self.ext:
-                    await self.ext_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
+                if self.site_down:
+                    await self.site_file_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
             except Exception as e:
-                print(f'下载ext中的json失败: {e}')
+                pass
             return
 
         # json容错处理
@@ -795,6 +805,6 @@ if __name__ == '__main__':
     token = 'xxx'
     username = 'xxx'
     repo = 'xxx'
-    url = 'https://tvbox.catvod.com/xs/api.json?signame=潇洒'
-    ext = True # 将ext中的文件下载本地化
-    GetSrc(username=username, token=token, url=url, repo=repo, mirror=4, num=10, ext=ext).run()
+    url = 'xxx'
+    site_down = True # 将site中的文件下载本地化
+    GetSrc(username=username, token=token, url=url, repo=repo, mirror=4, num=10, site_down=site_down).run()
