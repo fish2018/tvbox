@@ -142,7 +142,8 @@ class GetSrc:
                 # print(f"开始下载 {len(tasks)} 个 drpy2 文件")
                 await asyncio.gather(*tasks, return_exceptions=True)
             else:
-                print("所有 drpy2 文件已存在，无需下载")
+                pass
+                # print("所有 drpy2 文件已存在，无需下载")
     def file_hash(self, filepath):
         with open(filepath, 'rb') as f:
             file_contents = f.read()
@@ -223,7 +224,7 @@ class GetSrc:
         return emoji_pattern.sub('', text)
     def json_compatible(self, str):
         # 兼容错误json
-        res = str.replace(' ', '').replace("'",'"').replace('key:', '"key":').replace('name:', '"name":').replace('type:', '"type":').replace('api:','"api":').replace('searchable:', '"searchable":').replace('quickSearch:', '"quickSearch":').replace('filterable:','"filterable":').strip()
+        res = str.replace(' ', '').replace("'",'"').replace('//"', '"').replace('//{', '{').replace('key:', '"key":').replace('name:', '"name":').replace('type:', '"type":').replace('api:','"api":').replace('searchable:', '"searchable":').replace('quickSearch:', '"quickSearch":').replace('filterable:','"filterable":').strip()
         return res
     def ghproxy(self, str):
         u = 'https://github.moeyy.xyz/'
@@ -265,108 +266,35 @@ class GetSrc:
         decoded_data = base64.b64decode(matches[-1])
         text = decoded_data.decode('utf-8')
         return text
-    def js_render(self, url):
-        # 获取js渲染页面源代码
+
+    async def js_render(self, url):
+        # 获取 JS 渲染页面源代码
         timeout = self.timeout * 4
         if timeout > 15:
             timeout = 15
-        browser_args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-software-rasterizer','--disable-setuid-sandbox']
-        session = HTMLSession(browser_args=browser_args)
-        r = session.get(f'http://lige.unaux.com/?url={url}', headers=self.headers, timeout=timeout, verify=False)
-        # 等待页面加载完成，Requests-HTML 会自动等待 JavaScript 执行完成
-        r.html.render(timeout=timeout)
-        # print('解密结果:',r.html.text)
-        return r.html
+        browser_args = [
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-setuid-sandbox',
+        ]
+        from requests_html import AsyncHTMLSession
+
+        session = AsyncHTMLSession(browser_args=browser_args)
+        try:
+            r = await session.get(
+                f'http://lige.unaux.com/?url={url}',
+                headers=self.headers,
+                timeout=timeout,
+                verify=False,
+            )
+            # 等待页面加载完成并渲染 JavaScript
+            await r.html.arender(timeout=timeout)
+            return r.html
+        finally:
+            await session.close()
     async def site_file_down(self, files, url):
-        """
-        异步函数，用于同时下载和更新 ext 和 jar 文件。
-
-        参数:
-            files: 包含一个或两个文件路径的列表，例如 ['api.json', 'output.json']
-            url: 基础 URL，用于构造完整的下载 URL
-        """
-        # 设置 ext 和 jar 的保存目录
-        ext_dir = f"{self.repo}/ext"
-        jar_dir = f"{self.repo}/jar"
-        for directory in [ext_dir, jar_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-
-        # 获取文件路径并读取 api.json
-        file = files[0]
-        file2 = files[1] if len(files) > 1 else ''
-
-        with open(file, 'r', encoding='utf-8') as f:
-            try:
-                api_data = commentjson.load(f)
-                sites = api_data["sites"]
-                print(f"总站点数: {len(sites)}")
-            except Exception as e:
-                print(f"解析 {file} 失败: {e}")
-                return
-
-        # 使用 aiohttp 创建会话并收集下载任务
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            tasks = []
-            for site in sites:
-                for field in ["ext", "jar"]:
-                    repo_dir_name = field
-                    if field in site:
-                        value = site[field]
-                        if isinstance(value, str):
-                            value = value.split(';')[0]
-                            if field == "ext":
-                                value = value.rstrip('?')
-                                if not value.endswith((".js", ".txt", ".json")):
-                                    continue
-
-                            filename = os.path.basename(value)
-                            if './' in value:
-                                path = os.path.dirname(url)
-                                json_url = value.replace('./', f'{path}/')
-                            else:
-                                json_url = urljoin(url, value)
-                            local_path = os.path.join(f"{self.repo}/{repo_dir_name}", filename)
-
-                            async def download_task(site=site, json_url=json_url, local_path=local_path,
-                                                    filename=filename, field=field, repo_dir_name=repo_dir_name):
-                                retries = 3  # 最大重试次数
-                                for attempt in range(retries):
-                                    try:
-                                        async with session.get(json_url) as response:
-                                            response.raise_for_status()
-                                            if os.path.exists(local_path):
-                                                site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
-                                                return
-                                            content = await response.read()
-                                            with open(local_path, "wb") as f:
-                                                f.write(content)
-                                            site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
-                                            return  # 成功后退出
-                                    except Exception as e:
-                                        # print(f"下载 {json_url} 失败 (尝试 {attempt + 1}/{retries}): {e}")
-                                        if attempt < retries - 1:
-                                            await asyncio.sleep(1)  # 失败后等待 1 秒
-                                        else:
-                                            print(f"下载 {json_url} 失败")
-
-                            tasks.append(download_task())
-
-            if tasks:
-                # print(f"总下载任务数: {len(tasks)}")
-                await asyncio.gather(*tasks)
-            else:
-                print("没有找到符合条件的 ext 或 jar 文件需要下载")
-
-        # 将更新后的数据写回文件
-        with open(file, 'w', encoding='utf-8') as f:
-            json.dump(api_data, f, indent=4, ensure_ascii=False)
-
-        if file2 and os.path.basename(file2):
-            with open(file2, 'w', encoding='utf-8') as f:
-                json.dump(api_data, f, indent=4, ensure_ascii=False)
-
-    async def download_and_update_ext_jar(self, files, url):
         """
         异步函数，用于同时下载和更新 ext、jar 和 api 文件。
 
@@ -389,11 +317,12 @@ class GetSrc:
 
         with open(file, 'r', encoding='utf-8') as f:
             try:
-                api_data = commentjson.load(f)
+                res = f.read()
+                api_data = commentjson.loads(res)
                 sites = api_data["sites"]
                 print(f"总站点数: {len(sites)}")
             except Exception as e:
-                print(f"解析 {file} 失败: {e}")
+                # print(f"解析 {file} 失败: {e}")
                 return
 
         # 使用 aiohttp 创建会话并收集下载任务
@@ -695,12 +624,16 @@ class GetSrc:
             if 'Read timed out' in str(e) or 'nodename nor servname provided, or not known' in str(e):
                 print(f'{self.url} 请求异常：{e}')
                 return
-            res = self.js_render(self.url).text.replace(' ', '').replace("'", '"')
+            html = await self.js_render(self.url)
+            res = html.text.replace(' ', '').replace("'", '"')
             if 'Read timed out' in str(e) or 'nodename nor servname provided, or not known' in str(e):
                 print(f'{self.url} 请求异常：{e}')
                 return
             if not res:
                 res = self.picparse(self.url).replace(' ', '').replace("'", '"')
+        # json容错处理
+        res = self.json_compatible(res)
+
         # 线路
         if 'searchable' in str(res):
             filename = self.signame + '.txt' if self.signame else f"{''.join(random.choices(string.ascii_letters + string.digits, k=10))}.txt"
@@ -717,8 +650,7 @@ class GetSrc:
                 print(333333333, e)
             try:
                 if self.site_down:
-                    # await self.site_file_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
-                    await self.download_and_update_ext_jar([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
+                    await self.site_file_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
             except Exception as e:
                 pass
             return
@@ -984,9 +916,6 @@ if __name__ == '__main__':
     token = 'xxx'
     username = 'xxx'
     repo = 'xxx'
-    # url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/wwb521/live/main/video.json?signame=18'
-    url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/supermeguo/BoxRes/main/Myuse/catcr.json?signame=v18'
-    # url = 'http://box.ufuzi.com/tv/qq/%E7%9F%AD%E5%89%A7%E9%A2%91%E9%81%93/api.json?signame=duanju'
-    # url = 'https://tvbox.catvod.com/xs/api.json?signame=xs'
+    url = 'https://tvbox.catvod.com/xs/api.json?signame=xs'
     site_down = True # 将site中的文件下载本地化
     GetSrc(username=username, token=token, url=url, repo=repo, mirror=4, num=10, site_down=site_down).run()
