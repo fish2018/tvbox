@@ -17,6 +17,7 @@ from requests.adapters import HTTPAdapter, Retry
 import os
 import subprocess
 import ssl
+import shutil
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, urljoin
 import commentjson
@@ -87,6 +88,61 @@ class GetSrc:
             "https://jsdelivr.b-cdn.net/gh",
             "https://jsdelivr.pai233.top/gh"
         ]
+
+        # 定义 drpy2 文件列表
+        self.drpy2 = False
+        self.drpy2_files = [
+            "cat.js", "crypto-js.js", "drpy2.min.js", "http.js", "jquery.min.js",
+            "jsencrypt.js", "log.js", "pako.min.js", "similarity.js", "uri.min.js",
+            "cheerio.min.js", "deep.parse.js", "gbk.js", "jinja.js", "json5.js",
+            "node-rsa.js", "script.js", "spider.js", "模板.js"
+        ]
+
+    async def download_drpy2_files(self):
+        """
+        异步下载 drpy2 文件到 self.repo/api/drpy2
+        """
+        # 创建 drpy2 目录
+        api_drpy2_dir = os.path.join(self.repo, "api/drpy2")
+        if not os.path.exists(api_drpy2_dir):
+            os.makedirs(api_drpy2_dir)
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False),
+                timeout=aiohttp.ClientTimeout(total=60, connect=15)
+        ) as session:
+            tasks = []
+            for filename in self.drpy2_files:
+                local_path = os.path.join(api_drpy2_dir, filename)
+                if os.path.exists(local_path):
+                    # print(f"文件已存在，跳过: {local_path}")
+                    continue
+                json_url = f"https://github.moeyy.xyz/https://raw.githubusercontent.com/fish2018/lib/main/js/dr_py/{filename}"
+
+                async def download_task(json_url=json_url, local_path=local_path, filename=filename):
+                    retries = 3
+                    for attempt in range(retries):
+                        try:
+                            async with session.get(json_url) as response:
+                                response.raise_for_status()
+                                content = await response.read()
+                                with open(local_path, "wb") as f:
+                                    f.write(content)
+                                # print(f"下载成功: {filename}")
+                                return True
+                        except Exception as e:
+                            # print(f"下载 {json_url} 失败 (尝试 {attempt + 1}/{retries}): {e}")
+                            if attempt < retries - 1:
+                                await asyncio.sleep(1)
+                            else:
+                                print(f"下载 {json_url} 最终失败")
+                                return False
+
+                tasks.append(download_task())
+
+            if tasks:
+                # print(f"开始下载 {len(tasks)} 个 drpy2 文件")
+                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                print("所有 drpy2 文件已存在，无需下载")
     def file_hash(self, filepath):
         with open(filepath, 'rb') as f:
             file_contents = f.read()
@@ -229,14 +285,14 @@ class GetSrc:
             files: 包含一个或两个文件路径的列表，例如 ['api.json', 'output.json']
             url: 基础 URL，用于构造完整的下载 URL
         """
-        # 1. 设置 ext 和 jar 的保存目录
+        # 设置 ext 和 jar 的保存目录
         ext_dir = f"{self.repo}/ext"
         jar_dir = f"{self.repo}/jar"
         for directory in [ext_dir, jar_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
-        # 2. 获取文件路径并读取 api.json
+        # 获取文件路径并读取 api.json
         file = files[0]
         file2 = files[1] if len(files) > 1 else ''
 
@@ -249,57 +305,162 @@ class GetSrc:
                 print(f"解析 {file} 失败: {e}")
                 return
 
-        # 3. 使用 aiohttp 创建会话并收集下载任务
+        # 使用 aiohttp 创建会话并收集下载任务
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             tasks = []
             for site in sites:
-                # 处理 ext 和 jar 字段
-                for field, repo_dir_name in [("ext", "ext"), ("jar", "jar")]:
+                for field in ["ext", "jar"]:
+                    repo_dir_name = field
                     if field in site:
                         value = site[field]
                         if isinstance(value, str):
-                            # 处理分号和末尾的 '?'（兼容 ext）
-                            value = value.split(';')[0].rstrip('?')
-                            # 提取文件名
+                            value = value.split(';')[0]
+                            if field == "ext":
+                                value = value.rstrip('?')
+                                if not value.endswith((".js", ".txt", ".json")):
+                                    continue
+
                             filename = os.path.basename(value)
-                            # 构造下载 URL
                             if './' in value:
                                 path = os.path.dirname(url)
                                 json_url = value.replace('./', f'{path}/')
                             else:
                                 json_url = urljoin(url, value)
-                            # 构造本地保存路径
                             local_path = os.path.join(f"{self.repo}/{repo_dir_name}", filename)
 
-                            # 定义异步下载任务
                             async def download_task(site=site, json_url=json_url, local_path=local_path,
                                                     filename=filename, field=field, repo_dir_name=repo_dir_name):
-                                try:
-                                    async with session.get(json_url) as response:
-                                        response.raise_for_status()
-                                        if os.path.exists(local_path):
-                                            # 文件已存在，直接更新字段
+                                retries = 3  # 最大重试次数
+                                for attempt in range(retries):
+                                    try:
+                                        async with session.get(json_url) as response:
+                                            response.raise_for_status()
+                                            if os.path.exists(local_path):
+                                                site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
+                                                return
+                                            content = await response.read()
+                                            with open(local_path, "wb") as f:
+                                                f.write(content)
                                             site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
-                                            return
-                                        # 下载并保存文件
-                                        content = await response.read()
-                                        with open(local_path, "wb") as f:
-                                            f.write(content)
-                                        site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
-                                except Exception as e:
-                                    pass
-                                    # print(f"下载 {json_url} 失败: {e}")
+                                            return  # 成功后退出
+                                    except Exception as e:
+                                        # print(f"下载 {json_url} 失败 (尝试 {attempt + 1}/{retries}): {e}")
+                                        if attempt < retries - 1:
+                                            await asyncio.sleep(1)  # 失败后等待 1 秒
+                                        else:
+                                            print(f"下载 {json_url} 失败")
 
                             tasks.append(download_task())
 
-            # 4. 并发执行所有下载任务
             if tasks:
-                print(f"总下载任务数: {len(tasks)}")
+                # print(f"总下载任务数: {len(tasks)}")
                 await asyncio.gather(*tasks)
             else:
                 print("没有找到符合条件的 ext 或 jar 文件需要下载")
 
-        # 5. 将更新后的数据写回文件
+        # 将更新后的数据写回文件
+        with open(file, 'w', encoding='utf-8') as f:
+            json.dump(api_data, f, indent=4, ensure_ascii=False)
+
+        if file2 and os.path.basename(file2):
+            with open(file2, 'w', encoding='utf-8') as f:
+                json.dump(api_data, f, indent=4, ensure_ascii=False)
+
+    async def download_and_update_ext_jar(self, files, url):
+        """
+        异步函数，用于同时下载和更新 ext、jar 和 api 文件。
+
+        参数:
+            files: 包含一个或两个文件路径的列表，例如 ['api.json', 'output.json']
+            url: 基础 URL，用于构造完整的下载 URL
+        """
+        # 设置 ext、jar 和 api 的保存目录
+        ext_dir = f"{self.repo}/ext"
+        jar_dir = f"{self.repo}/jar"
+        api_dir = f"{self.repo}/api"
+        api_drpy2_dir = f"{self.repo}/api/drpy2"
+        for directory in [ext_dir, jar_dir, api_dir, api_drpy2_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
+        # 获取文件路径并读取 api.json
+        file = files[0]
+        file2 = files[1] if len(files) > 1 else ''
+
+        with open(file, 'r', encoding='utf-8') as f:
+            try:
+                api_data = commentjson.load(f)
+                sites = api_data["sites"]
+                print(f"总站点数: {len(sites)}")
+            except Exception as e:
+                print(f"解析 {file} 失败: {e}")
+                return
+
+        # 使用 aiohttp 创建会话并收集下载任务
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False),
+                timeout=aiohttp.ClientTimeout(total=60, connect=15)
+        ) as session:
+            tasks = []
+            for site in sites:
+                for field in ["ext", "jar", "api"]:
+                    repo_dir_name = field
+                    if field in site:
+                        value = site[field]
+                        if isinstance(value, str):
+                            clean_value = value.split(';')[0].rstrip('?')
+                            if field == "ext":
+                                if not clean_value.endswith((".js", ".txt", ".json")):
+                                    continue
+                            elif field == "api":
+                                if os.path.basename(clean_value).lower() == "drpy2.min.js":
+                                    self.drpy2 = True
+                                    # 替换 drpy2.min.js 的 api 字段
+                                    site[field] = f"{self.cnb_slot}/{api_drpy2_dir}/drpy2.min.js"
+                                    continue
+                                if not clean_value.endswith(".py"):
+                                    continue
+
+                            # 默认下载逻辑（ext、jar 和 api 的 .py 文件）
+                            filename = os.path.basename(clean_value)
+                            if './' in value:
+                                path = os.path.dirname(url)
+                                json_url = value.replace('./', f'{path}/')
+                            else:
+                                json_url = urljoin(url, value)
+                            local_path = os.path.join(f"{self.repo}/{repo_dir_name}", filename)
+
+                            async def download_task(site=site, json_url=json_url, local_path=local_path,
+                                                    filename=filename, field=field, repo_dir_name=repo_dir_name):
+                                retries = 3
+                                for attempt in range(retries):
+                                    try:
+                                        async with session.get(json_url) as response:
+                                            response.raise_for_status()
+                                            if os.path.exists(local_path):
+                                                site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
+                                                return True
+                                            content = await response.read()
+                                            with open(local_path, "wb") as f:
+                                                f.write(content)
+                                            site[field] = f'{self.cnb_slot}/{repo_dir_name}/{filename}'
+                                            return True
+                                    except Exception as e:
+                                        # print(f"下载 {json_url} 失败 (尝试 {attempt + 1}/{retries}): {e}")
+                                        if attempt < retries - 1:
+                                            await asyncio.sleep(1)
+                                        else:
+                                            # print(f"下载 {json_url} 最终失败")
+                                            return False
+
+                            tasks.append(download_task())
+
+            if tasks:
+                # print(f"总下载任务数: {len(tasks)}")
+                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                print("没有找到符合条件的 ext、jar 或 api 文件需要下载")
+
+        # 将更新后的数据写回文件
         with open(file, 'w', encoding='utf-8') as f:
             json.dump(api_data, f, indent=4, ensure_ascii=False)
 
@@ -443,6 +604,21 @@ class GetSrc:
             self.signame = signame_value if signame_value else None
             print(f'当前url: {self.url}')
             await self.storeHouse()
+        await self.clean_directories()
+
+    async def clean_directories(self):
+        # Step 1: 删除 api/drpy2 目录（如果 self.drpy2 为假）
+        if not self.drpy2:
+            drpy2_path = f"{self.repo}/api/drpy2"
+            if os.path.exists(drpy2_path):
+                await asyncio.to_thread(shutil.rmtree, drpy2_path)
+
+        # Step 2: 检查并删除空的 api 和 ext 目录
+        directories = [f"{self.repo}/api", f"{self.repo}/ext"]
+        for dir_path in directories:
+            if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                if not os.listdir(dir_path):  # 目录为空
+                    await asyncio.to_thread(shutil.rmtree, dir_path)
     def git_clone(self):
         self.domain = f'https://{self.gitusername}:{self.token}@{self.registry}/{self.username}/{self.repo}.git'
         if os.path.exists(self.repo):
@@ -504,6 +680,8 @@ class GetSrc:
         '''
         生成多仓json文件
         '''
+        await self.download_drpy2_files()
+
         newJson = {}
         items = []
 
@@ -539,7 +717,8 @@ class GetSrc:
                 print(333333333, e)
             try:
                 if self.site_down:
-                    await self.site_file_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
+                    # await self.site_file_down([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
+                    await self.download_and_update_ext_jar([f'{self.repo}{self.sep}{filename}',f'{self.repo}{self.sep}{self.target}'], self.url)
             except Exception as e:
                 pass
             return
@@ -796,7 +975,7 @@ class GetSrc:
         repo = self.get_local_repo()
         self.all()
         self.mirror_proxy2new()
-        self.git_push(repo)
+        # self.git_push(repo)
         end_time = time.time()
         print(f'耗时: {end_time - start_time} 秒\n\n#################影视仓APP配置接口########################\n\n{self.cnb_slot}/all.json\n{self.cnb_slot}/{self.target}')
 
@@ -805,6 +984,9 @@ if __name__ == '__main__':
     token = 'xxx'
     username = 'xxx'
     repo = 'xxx'
-    url = 'xxx'
+    # url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/wwb521/live/main/video.json?signame=18'
+    url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/supermeguo/BoxRes/main/Myuse/catcr.json?signame=v18'
+    # url = 'http://box.ufuzi.com/tv/qq/%E7%9F%AD%E5%89%A7%E9%A2%91%E9%81%93/api.json?signame=duanju'
+    # url = 'https://tvbox.catvod.com/xs/api.json?signame=xs'
     site_down = True # 将site中的文件下载本地化
     GetSrc(username=username, token=token, url=url, repo=repo, mirror=4, num=10, site_down=site_down).run()
