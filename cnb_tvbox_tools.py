@@ -975,7 +975,7 @@ class GetSrc:
         repo = self.get_local_repo()
         self.all()
         self.mirror_proxy2new()
-        # self.git_push(repo)
+        self.git_push(repo)
         end_time = time.time()
         print(f'耗时: {end_time - start_time} 秒\n\n#################影视仓APP配置接口########################\n\n{self.cnb_slot}/all.json\n{self.cnb_slot}/{self.target}')
 
