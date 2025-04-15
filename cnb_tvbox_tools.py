@@ -95,7 +95,7 @@ class GetSrc:
             "cat.js", "crypto-js.js", "drpy2.min.js", "http.js", "jquery.min.js",
             "jsencrypt.js", "log.js", "pako.min.js", "similarity.js", "uri.min.js",
             "cheerio.min.js", "deep.parse.js", "gbk.js", "jinja.js", "json5.js",
-            "node-rsa.js", "script.js", "spider.js", "模板.js"
+            "node-rsa.js", "script.js", "spider.js", "模板.js", "quark.min.js"
         ]
 
     async def download_drpy2_files(self):
@@ -224,7 +224,8 @@ class GetSrc:
         return emoji_pattern.sub('', text)
     def json_compatible(self, str):
         # 兼容错误json
-        res = str.replace(' ', '').replace("'",'"').replace('//"', '"').replace('//{', '{').replace('key:', '"key":').replace('name:', '"name":').replace('type:', '"type":').replace('api:','"api":').replace('searchable:', '"searchable":').replace('quickSearch:', '"quickSearch":').replace('filterable:','"filterable":').strip()
+        # res = str.replace(' ', '').replace("'",'"').replace('//"', '"').replace('//{', '{').replace('key:', '"key":').replace('name:', '"name":').replace('type:', '"type":').replace('api:','"api":').replace('searchable:', '"searchable":').replace('quickSearch:', '"quickSearch":').replace('filterable:','"filterable":').strip()
+        res = str.replace('//"', '"').replace('//{', '{').replace('key:', '"key":').replace('name:', '"name":').replace('type:', '"type":').replace('api:','"api":').replace('searchable:', '"searchable":').replace('quickSearch:', '"quickSearch":').replace('filterable:','"filterable":').strip()
         return res
     def ghproxy(self, str):
         u = 'https://github.moeyy.xyz/'
@@ -317,8 +318,7 @@ class GetSrc:
 
         with open(file, 'r', encoding='utf-8') as f:
             try:
-                res = f.read()
-                api_data = commentjson.loads(res)
+                api_data = commentjson.load(f)
                 sites = api_data["sites"]
                 print(f"总站点数: {len(sites)}")
             except Exception as e:
@@ -341,10 +341,10 @@ class GetSrc:
                                 if not clean_value.endswith((".js", ".txt", ".json")):
                                     continue
                             elif field == "api":
-                                if os.path.basename(clean_value).lower() == "drpy2.min.js":
+                                if os.path.basename(clean_value).lower() in ["drpy2.min.js","quark.min.js"]:
                                     self.drpy2 = True
-                                    # 替换 drpy2.min.js 的 api 字段
-                                    site[field] = f"{self.cnb_slot}/{api_drpy2_dir}/drpy2.min.js"
+                                    # 替换 api 字段
+                                    site[field] = f"{self.cnb_slot}/{api_drpy2_dir}/{os.path.basename(clean_value).lower()}"
                                     continue
                                 if not clean_value.endswith(".py"):
                                     continue
@@ -387,7 +387,8 @@ class GetSrc:
                 # print(f"总下载任务数: {len(tasks)}")
                 await asyncio.gather(*tasks, return_exceptions=True)
             else:
-                print("没有找到符合条件的 ext、jar 或 api 文件需要下载")
+                pass
+                # print("没有找到符合条件的 ext、jar 或 api 文件需要下载")
 
         # 将更新后的数据写回文件
         with open(file, 'w', encoding='utf-8') as f:
@@ -631,8 +632,6 @@ class GetSrc:
                 return
             if not res:
                 res = self.picparse(self.url).replace(' ', '').replace("'", '"')
-        # json容错处理
-        res = self.json_compatible(res)
 
         # 线路
         if 'searchable' in str(res):
@@ -644,6 +643,8 @@ class GetSrc:
                         f'{self.repo}{self.sep}{self.target}', 'w+', encoding='utf-8') as f2:
                     r = self.ghproxy(res.replace('./', f'{path}/'))
                     r = self.get_jar(filename.split('.txt')[0], url, r)
+                    # json容错处理
+                    r = self.json_compatible(r)
                     f.write(r)
                     f2.write(r)
             except Exception as e:
@@ -750,7 +751,8 @@ class GetSrc:
                 if 'domainnameisinvalid' in res:
                     print(f'该域名无效，请提供正常可用接口')
                     return
-                res = self.js_render(self.url).text.replace(' ', '').replace("'", '"')
+                html = await self.js_render(self.url)
+                res = html.text.replace(' ', '').replace("'", '"')
                 if not res:
                     res = self.picparse(self.url).replace(' ', '').replace("'", '"')
                 try:
@@ -914,8 +916,12 @@ class GetSrc:
 
 if __name__ == '__main__':
     token = 'xxx'
-    username = 'xxx'
-    repo = 'xxx'
+    username = 'fish2018'
+    repo = 'test'
+    # url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/wwb521/live/main/video.json?signame=18'
+    # url = 'https://github.moeyy.xyz/https://raw.githubusercontent.com/supermeguo/BoxRes/main/Myuse/catcr.json?signame=v18'
+    # url = 'http://box.ufuzi.com/tv/qq/%E7%9F%AD%E5%89%A7%E9%A2%91%E9%81%93/api.json?signame=duanju'
+    # url = 'https://肥猫.com?signame=肥猫'
     url = 'https://tvbox.catvod.com/xs/api.json?signame=xs'
     site_down = True # 将site中的文件下载本地化
     GetSrc(username=username, token=token, url=url, repo=repo, mirror=4, num=10, site_down=site_down).run()
